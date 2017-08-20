@@ -1,195 +1,159 @@
+
 import sys
 import getopt
 import socket
 import threading
+import thread
 import subprocess
-
-# Declaring global variables
-listen = False
-upload = False
-command_line = False
-target = ""
-port = 0
-execute = ""
-upload_destination = ""
+import os
 
 def usage():
-    print("NetCat - swiss knife of networking\n")
-    print("Usage: netcat.py -t [target-address] -p [target-port]")
-    print("-l --listen                  -listen on [host]:[port] for incoming connections")
-    print("-c --command                 -initialize a command shell")
-    print("-e --execute                 -execute a file upon receiving a connection")
-    print("-u --upload=destination      -upload a receiving a connection upload a file and write to [destination]")
-    print()
+    print "----------------------------------------------------"
+    print "                  *NETC*                            "
+    print "----------------------------------------------------"
+    print "usage : netc.py -t target -p port"
+    print "-l --listen      : to listen for incoming connections"
+    print "-s --shell       : to initiate a command shell"
+    print "-u --upload path : to upload a file to specific path or destination"
+    print "\nExamples:"
+    print "netc.py -t 127.0.0.1 -p 8080 -l -s"
+    print "netc.py -t 127.0.0.1 -p 8080 -l -u \"c:\\Desktop\\r.txt\""
+    print "echo \"something\" |netc.py -t 192.1.1.14 -p 80 "
+    sys.exit(0)
 
-def client_sender(buffer):
-    client = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-    try:
-        # connect to our target host
-        client.connect((target,port))
+#defining some global variables
+target=''
+port =0
+listen=False
+shell=False
+upload=""
 
-        if len(buffer):
-            client.send(str.encode(buffer))
+if not len(sys.argv[1:]):
+    usage()
 
-        while True:
-            recieve_length = 1
-            response = ""
-
-            while recieve_length:
-                recieved_data = client.recv(4096)
-                recieve_length = len(recieved_data)
-                response += str(recieved_data, "utf-8")
-
-                if recieve_length < 4096:
-                    break
-
-            print(response)
-
-            # waiting for more input
-            buffer = input()
-            buffer+="\n"
-
-            # send the new input
-            client_sender(str.encode(buffer))
-
-    except:
-        print("Exception encountered! Exiting now...")
-        # close the connection of client socket
-        client.close()
-
-def run_command(command):
-    # trim the new line
-    command = command.rstrip()
-
-    # run the command and get the output
-    try:
-        output = str(subprocess.check_output(command,stderr=subprocess.STDOUT,shell=True),"utf-8")
-    except:
-        output = "Failed to execute command. \r\n"
-
-    # send the output to the client
-
-    return output
+try:
+    options,arguments=getopt.getopt(sys.argv[1:],'t:p:lsu:',["target=","port=","listen","shell","upload="])
+except getopt.GetoptError as err :
+    print str(err)
+    usage()
+for o,a in options:
+    if o in ("-t","--target"):
+        target =a
+    elif o in ("-p","--port"):
+        port = int(a)
+    elif o in ("-l","--listen"):
+        listen= True
+    elif o in ("-s","--shell"):
+        shell = True
+    elif o in ("-u","--upload"):
+        upload = a
+    else:
+        print "Unhandled operation\n"
+        usage()
 
 
-
-def client_handler(client_socket):
-    # check for upload
-    if len(upload_destination):
-        # read all the bytes and write to destination
-        file_buffer = ""
-
-        while True:
-            data = client_socket.recv(1024)
-
-            if not data:
-                break
-            else:
-                file_buffer += data
-
-        # now write these bytes to upload destination
-        try:
-            file_pointer = open(upload_destination,"wb")
-            file_pointer.write(file_buffer)
-            file_pointer.close()
-            msg="Successfully written file to: " + str(upload_destination)
-            client_socket.send(str.encode(msg))
-        except:
-            msg = "Failed to save file: " + str(upload_destination)
-            client_socket.send(str.encode(msg))
-
-    # checking for command execution
-    if len(execute):
-        # run the command
-        output = run_command(execute)
-
-        # send the response to client
-        client_socket.send(str.encode(output))
-
-    # check whether a command shell was requested
-    if command_line:
-        while True:
-            # show the prompt
-            print("<netcat#> ")
-
-            # now recieve the command until linefeed (new line) is found
-            command_buffer = ""
-
-            while "\n" not in command_buffer:
-                cmd = client_socket.recv(1024)
-                command_buffer += str(cmd,"utf-8")
-
-            response = run_command(command_buffer)
-
-            # sending the response back
-            client_socket.send(str.encode(response))
-            
-
-def server_loop():
+def client():
     global target
-
-    # if no target is defined then listening on all the interfaces
-    if not len(target):
-        target = "0.0.0.0"
-
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-        # binding to given target on given port
-        server_socket.bind((target,port))
-        server_socket.listen(5)
-
-        while True:
-            conn, addr = server_socket.accept()
-            print("Connection established to: " + str(addr[0]) + " : " + str(addr[1]))
-            client_thread = threading.Thread( target = client_handler, args=(conn,))
-            client_thread.start()
-
-
-def main():
-    global target
-    global listen
     global port
-    global execute
-    global command_line
-    global upload_destination
-
-    if not len(sys.argv[1:]):
-        usage()
-
-    # get the command line arguments
     try:
-        opts, args = getopt.getopt(sys.argv[1:],"hle:u:ct:p:",["help","listen","execute=","upload=","command","target=","port="])
-    except getopt.GetoptError as msg:
-        print(str(msg))
-        usage()
+        host=socket.gethostbyname(target)
+    except socket.gaierror:
+        print "Error in resolving hostname"
+        sys.exit(0)
+    s=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+    print "Connecting to server................."
+    try :
+        s.connect((host,port))
+    except socket.error as err:    
+        print "Error in connecting socket"
+        print str(err)
+        sys.exit(0)
+    s.setblocking(0)
+    while True:
+        response=""
+        try:
+            while 1:
+                data=s.recv(4096)
+                response=response + data
+                if len(data) < 4096:
+                    break
+        except:
+            pass         
+        sys.stdout.write(response)
+        buff=raw_input()
+        if len(buff):
+            s.send(buff)
+        
+def server():
+    global target
+    global port
+    global shell
+    global upload
+    
+    if not len(target):
+        target=''
+    s=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    print 'Socket Created '
+    print 'Binding Socket '
+    try:
+        s.bind((target,port))
+    except:
+        print 'Error in binding socket'
+        sys.exit(0)
+    s.listen(5)
+    print 'Listening for connections .........'
+    while True :
+        conn,addr=s.accept()
+        print 'Connected to ' + str(addr[0]) + 'at port: ' + str(addr[1])
+        thread.start_new_thread(client_handler,(conn,))
+        #t1.daemon=True
+        #t1.start()
 
-    for o, a in opts:
-        if o in ("-h","--help"):
-            usage()
-            sys.exit(1)
-        elif o in ("-l","--listen"):
-            listen = True
-        elif o in ("-e","--execute"):
-            execute = a
-        elif o in ("-u","--upload"):
-            upload_destination = a
-        elif o in ("-c","--command"):
-            command_line = true
-        elif o in ("-t","--target"):
-            target = a
-        elif o in ("-p","--port"):
-            port = int(a)
-        else:
-            assert False,"Unhandled option"
+def client_handler(conn):
+    global shell
+    global upload 
+    if len(upload) :
+        try :
+            buff= ''
+            while True:
+                data=conn.recv(4096)        
+                buff=buff+data
+                if len(data) < 4096:
+                    break
+            fd=open(upload,"wb")
+            fd.write(buff)
+            fd.close()
+            print 'Successfully uploaded the file to %s' %(upload)
+        except:
+            print 'Failed to upload file to specified destination'
+    elif shell :
+        buff='enter the command or quit to exit\n'
+        buff= buff + str(os.getcwd()) + '>'
+        conn.send(buff)
+        while True :
+            command=conn.recv(1024)
+            if command[0:4]=='quit' or command[0:1]=='q': 
+                break
+            #command.rstrip()
+            if command[0:2]=='cd' :
+                os.chdir(command[3:])
+            if len(command) > 0 :
+                try:
+                    cmd=subprocess.Popen(command[:],shell=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,stdin=subprocess.PIPE)
+                    output=str(cmd.stdout.read() + cmd.stderr.read())
+                    output= output +str(os.getcwd()) + '>'
+                    conn.sendall(output)
+                except:
+                    print ' Cannot execute command .... Try again '
+                    pass
+    else :
+         utility()
+                    
 
-        # if listening
-        if listen:
-            server_loop()
+if not listen and len(target) and port > 0:
+    #buff= raw_input()
+    client()
 
-        # if not listening and just sending the data from standard input
-        if not listen and len(target) and port > 0:
-            buffer = sys.stdin.read()
-            client_sender(buffer)
-
-
-main()
+if listen:
+    server()  
